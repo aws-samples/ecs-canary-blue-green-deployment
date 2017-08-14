@@ -1,0 +1,145 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  A CloudFormation template to create an ECS canary blue-green deployment environment. 
+  This template creates a VPC, an ECS cluster, with a task and service registered to a 'blue' loadbalancer.
+  It also registers a Route53 domain name for a service.  This domain will point at the blue loadbalancer to start.
+  
+Parameters:
+  RecordSetName:
+    Type: String
+    Description: A record to use to direct traffic to the load balancer. For example 'myservice'.
+  HostedZoneName:
+    Type: String
+    Description: Name of the hosted zone in Route53. For example 'example.com.'. This MUST end in a '.'
+  TemplateBucket:
+    Type: String
+    Description: S3 Bucket used for nested templates
+      
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: ECS canary blue green deployment, using DNS mechanism
+        Parameters:
+          - TemplateBucket
+          - HostedZoneName
+          - RecordSetName
+    ParameterLabels:
+      TemplateBucket:
+        default: "An S3 bucket to hold your CloudFormation templates and lambda functions"
+      HostedZoneName:
+        default: "What is the hosted zone DNS name?"
+      RecordSetName:
+        default: "What is the service name?"
+        
+Resources:
+  Cluster:
+    DependsOn: VPC
+    DependsOn: LoadBalancer
+    DependsOn: NewLB
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://s3.amazonaws.com/${TemplateBucket}/templates/ecs-cluster.yaml
+      Parameters:
+        SourceSecurityGroup1: !GetAtt LoadBalancer.Outputs.SecurityGroup
+        SourceSecurityGroup2: !GetAtt NewLB.Outputs.SecurityGroup
+        Subnets: !GetAtt VPC.Outputs.Subnets
+        VpcId: !GetAtt VPC.Outputs.VpcId
+
+  LoadBalancer:
+    DependsOn: VPC
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://s3.amazonaws.com/${TemplateBucket}/templates/load-balancer.yaml
+      Parameters:
+        Subnets: !GetAtt VPC.Outputs.Subnets
+        VpcId: !GetAtt VPC.Outputs.VpcId
+
+  NewLB:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: VPC
+    Properties:
+      TemplateURL: !Sub https://s3.amazonaws.com/${TemplateBucket}/templates/load-balancer.yaml
+      Parameters:
+        Subnets: !GetAtt VPC.Outputs.Subnets
+        VpcId: !GetAtt VPC.Outputs.VpcId
+        
+  VPC:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://s3.amazonaws.com/${TemplateBucket}/templates/vpc.yaml
+      Parameters:
+        Name: !Ref AWS::StackName
+        VpcCIDR: 192.168.0.0/16
+        Subnet1CIDR: 192.168.10.0/24
+        Subnet2CIDR: 192.168.20.0/24
+
+  Service:
+    DependsOn: Cluster
+    DependsOn: LoadBalancer
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://s3.amazonaws.com/${TemplateBucket}/templates/blueService.yaml
+      Parameters:
+        Cluster: !GetAtt Cluster.Outputs.ClusterName
+        TargetGroup: !GetAtt LoadBalancer.Outputs.TargetGroup
+
+  Route53:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: LoadBalancer
+    DependsOn: NewLB
+    Properties:
+      TemplateURL: !Sub https://s3.amazonaws.com/${TemplateBucket}/templates/route53.yaml
+      Parameters:
+        ZoneName: !Ref HostedZoneName
+        RecordName: !Ref RecordSetName
+        BlueName: !GetAtt LoadBalancer.Outputs.DNSName
+        GreenName: !GetAtt NewLB.Outputs.DNSName
+        CanonicalZone: !GetAtt LoadBalancer.Outputs.CanonicalZone
+    
+  myDynamoDBTable:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: LoadBalancer
+    DependsOn: NewLB
+    DependsOn: Route53
+    Properties:
+      TemplateURL: !Sub https://s3.amazonaws.com/${TemplateBucket}/templates/dynamo.yaml
+      Parameters:
+        DNSName: !GetAtt Route53.Outputs.DNS
+        OldLB: !GetAtt LoadBalancer.Outputs.DNSName
+        NewLB: !GetAtt NewLB.Outputs.DNSName
+        HostedZoneID: !GetAtt Route53.Outputs.HostedZoneID
+        LBZoneID: !GetAtt LoadBalancer.Outputs.CanonicalZone
+        TargetGroup: !GetAtt NewLB.Outputs.TargetGroup
+        
+Outputs:
+  DNS:
+    Description: The DNS name of the Route53 domain handling the blue-green service
+    Value: !GetAtt Route53.Outputs.DNS
+  BlueLoadBalancerUrl:
+    Description: The URL of the LB handling the blue service
+    Value: !GetAtt LoadBalancer.Outputs.ServiceUrl
+  GreenLoadBalancerUrl:
+    Description: The URL of the LB handling the green service
+    Value: !GetAtt NewLB.Outputs.ServiceUrl
+  ClusterName:
+    Description: The ECS cluster name
+    Value: !GetAtt Cluster.Outputs.ClusterName
+    Export: 
+      Name: !Sub "${AWS::StackName}-Cluster"
+  TargetGroup:
+    Description: The Load Balancer's Target Group. This allows the new ECS service to register with the proper LB
+    Value: !GetAtt NewLB.Outputs.TargetGroup
+    Export: 
+      Name: !Sub "${AWS::StackName}-TG"
+  BucketName:
+    Description: The S3 bucket where all the templates and scripts are being stored
+    Value: !Ref TemplateBucket
+    Export:
+      Name: !Sub "${AWS::StackName}-Bucket"
+  TableName:
+    Description: Table name of the newly created DynamoDB table
+    Value: !Ref 'myDynamoDBTable'
+    Export:
+      Name: !Sub "${AWS::StackName}-Table"

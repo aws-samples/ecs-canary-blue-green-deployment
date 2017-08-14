@@ -1,0 +1,75 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  This template creates the lambda functions, Step Functions, and CloudWatch Events Streams 
+  required to trigger and execute the switch from one ECS service to another. It also creates
+  the blue ECS service - so upon completion the trigger should fire and the canary switch should start.
+  
+Parameters:
+  SetupStackName:
+    Type: String
+    Default: "canary-setup"
+  TemplateBucket:
+    Type: String
+    Default: "nbrand-code"
+
+Resources:
+  handleECSEvents:
+    Type: 'AWS::Serverless::Function'
+    DependsOn: StepFunction
+    Properties:
+      Handler: index.lambda_handler
+      Runtime: python2.7
+      CodeUri: # CodeUri: 's3://my-code-bucket/my-function.zip'
+        Bucket: #!Ref TemplateBucket
+          Fn::ImportValue:
+            !Sub "${SetupStackName}-Bucket"
+        Key: lambdafunctions/handleECSEvents.zip
+      Description: Handles ECS Events even if there are duplicates or timing issues
+      Environment:
+        Variables:
+          TRIGGER_CONTAINERS: 'green-app'
+          STEP_FUNCTION: !GetAtt StepFunction.Outputs.StepArn
+      MemorySize: 128
+      Timeout: 3
+      Policies:
+        - "AWSLambdaFullAccess"
+        - "AWSStepFunctionsFullAccess"
+      Events:
+        ECSStream:
+          Description: "Sending ECS events to a Lambda function for processing"
+          Type: CloudWatchEvent
+          Properties:
+            Pattern:
+              source: 
+                - 'aws.ecs'
+              detail-type: 
+                - 'ECS Task State Change'
+              detail:
+                lastStatus: 
+                  - 'RUNNING'
+                desiredStatus: 
+                  - 'RUNNING'
+
+  Service:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: handleECSEvents          # Make sure that lambda function is ready
+    DependsOn: handleECSEventsECSStream # Make sure that the Event Stream is ready first
+    Properties:
+      TemplateURL: !Sub https://s3.amazonaws.com/${TemplateBucket}/templates/greenService.yaml
+      Parameters:
+        Cluster: 
+          Fn::ImportValue: 
+            !Sub "${SetupStackName}-Cluster" #!GetAtt Cluster.Outputs.ClusterName
+        TargetGroup: 
+          Fn::ImportValue:
+            !Sub "${SetupStackName}-TG"      #!GetAtt LoadBalancer.Outputs.TargetGroup
+            
+  StepFunction:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://s3.amazonaws.com/${TemplateBucket}/templates/stepfunction.yaml
+      Parameters:
+        TemplateBucket: 
+          Fn::ImportValue: 
+            !Sub "${SetupStackName}-Bucket"
