@@ -1,0 +1,121 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Creates the dynamoDB table to hold state.  The table name is 'CanaryTable'
+  
+# This stack uses custom resources.  The following links were useful to me, as I never worked with custom resources before
+# http://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/walkthrough-custom-resources-lambda-lookup-amiids.html
+# https://stackoverflow.com/questions/41452274/how-to-create-a-new-version-of-a-lambda-function-using-cloudformation
+# https://stackoverflow.com/questions/42551408/putitem-in-dynamodb-table-by-cloudformation
+Parameters:
+  DNSName:
+    Type: String
+  OldLB:
+    Type: String
+  NewLB:
+    Type: String
+  HostedZoneID:
+    Type: String
+  LBZoneID:
+    Type: String
+  TargetGroup:
+    Type: String
+  
+Resources:
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      Policies:
+        - PolicyName: dynamodbAccessRole
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - dynamodb:*
+              Resource: "*"
+            - Effect: Allow
+              Action:
+              - logs:*
+              Resource: "*"
+              
+  InitFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        ZipFile: |
+          import json
+          import cfnresponse
+          import boto3
+           
+          dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
+          
+          def handler(event, context):
+            tableName = event['ResourceProperties']['DynamoTableName']
+            newcontainername = event['ResourceProperties']['NewContainerName']
+            oldlb = event['ResourceProperties']['OldLB']
+            newlb = event['ResourceProperties']['NewLB']
+            hostedzone = event['ResourceProperties']['HostedZoneID']
+            lbzoneid = event['ResourceProperties']['LBZoneID']
+            dnsname = event['ResourceProperties']['DNSName']
+            dnsname = dnsname[:-1]
+            targetgroup = event['ResourceProperties']['TargetGroup']
+            
+            table = dynamodb.Table(tableName)
+            response = table.put_item(
+              Item={
+                'NewContainerName': newcontainername,
+                'Triggered' : False,
+                'RecordName': dnsname,
+                'OldLB' : oldlb,
+                'NewLB' : newlb,
+                'HostedZoneID': hostedzone,
+                'LBZoneID': lbzoneid,
+                'TargetGroup': targetgroup
+                })
+            responseData = {}
+            responseData['Data'] = response
+            cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
+            return
+      Handler: index.handler
+      Role:
+        Fn::GetAtt: [ LambdaRole , "Arn" ]
+      Runtime: python3.6
+      Timeout: 5
+      
+  DynamoDB:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: "CanaryTable"
+      AttributeDefinitions: 
+        - AttributeName: "NewContainerName"
+          AttributeType: "S"
+      KeySchema:
+        - AttributeName: "NewContainerName"
+          KeyType: "HASH"
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+      
+  InitializeDynamoDB:
+    Type: Custom::InitFunction
+    DependsOn: DynamoDB
+    Properties:
+      ServiceToken:
+         Fn::GetAtt: [ InitFunction , "Arn" ]
+      DynamoTableName: !Ref DynamoDB
+      DNSName: !Ref DNSName
+      OldLB: !Ref OldLB
+      NewLB: !Ref NewLB
+      NewContainerName: 'green-app'
+      HostedZoneID: !Ref HostedZoneID
+      LBZoneID: !Ref LBZoneID
+      TargetGroup: !Ref TargetGroup
