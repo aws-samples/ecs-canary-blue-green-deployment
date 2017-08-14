@@ -35,7 +35,7 @@ aws s3 mb s3://<MY_BUCKET_NAME>
 #### 2. Clone this repo
 
 ```console
-git clone https://github.com/nbrandaleone/canary-blog.git
+git clone https://github.com/awslabs/ecs-canary-blue-green-deployment.git
 ```
 
 #### 3. Copy all templates and scripts into your bucket
