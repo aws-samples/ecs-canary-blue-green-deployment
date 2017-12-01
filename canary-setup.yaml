@@ -34,18 +34,23 @@ Metadata:
         default: "What is the service name?"
         
 Resources:
+#  Cluster:
+#    DependsOn: VPC
+#    DependsOn: LoadBalancer
+#    DependsOn: NewLB
+#    Type: AWS::CloudFormation::Stack
+#    Properties:
+#      TemplateURL: !Sub https://s3.amazonaws.com/${TemplateBucket}/templates/ecs-cluster.yaml
+#      Parameters:
+#        SourceSecurityGroup1: !GetAtt LoadBalancer.Outputs.SecurityGroup
+#        SourceSecurityGroup2: !GetAtt NewLB.Outputs.SecurityGroup
+#        Subnets: !GetAtt VPC.Outputs.Subnets
+#        VpcId: !GetAtt VPC.Outputs.VpcId
+
   Cluster:
-    DependsOn: VPC
-    DependsOn: LoadBalancer
-    DependsOn: NewLB
-    Type: AWS::CloudFormation::Stack
+    Type: AWS::ECS::Cluster
     Properties:
-      TemplateURL: !Sub https://s3.amazonaws.com/${TemplateBucket}/templates/ecs-cluster.yaml
-      Parameters:
-        SourceSecurityGroup1: !GetAtt LoadBalancer.Outputs.SecurityGroup
-        SourceSecurityGroup2: !GetAtt NewLB.Outputs.SecurityGroup
-        Subnets: !GetAtt VPC.Outputs.Subnets
-        VpcId: !GetAtt VPC.Outputs.VpcId
+      ClusterName: !Ref AWS::StackName
 
   LoadBalancer:
     DependsOn: VPC
@@ -82,8 +87,11 @@ Resources:
     Properties:
       TemplateURL: !Sub https://s3.amazonaws.com/${TemplateBucket}/templates/blueService.yaml
       Parameters:
-        Cluster: !GetAtt Cluster.Outputs.ClusterName
+        Cluster: !Ref Cluster
         TargetGroup: !GetAtt LoadBalancer.Outputs.TargetGroup
+        Subnets: !GetAtt VPC.Outputs.Subnets
+        VpcId: !GetAtt VPC.Outputs.VpcId
+        ALBSg: !GetAtt LoadBalancer.Outputs.SecurityGroup
 
   Route53:
     Type: AWS::CloudFormation::Stack
@@ -125,7 +133,7 @@ Outputs:
     Value: !GetAtt NewLB.Outputs.ServiceUrl
   ClusterName:
     Description: The ECS cluster name
-    Value: !GetAtt Cluster.Outputs.ClusterName
+    Value: !Ref Cluster
     Export: 
       Name: !Sub "${AWS::StackName}-Cluster"
   TargetGroup:

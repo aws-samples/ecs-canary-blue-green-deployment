@@ -44,6 +44,7 @@ Resources:
     Properties:
       # Name: name of LB 
       VpcId: !Ref VpcId
+      TargetType: ip
       Port: 80
       Protocol: HTTP
       Matcher:
@@ -81,4 +82,4 @@ Outputs:
   DNSName:
     Value: !GetAtt LoadBalancer.DNSName
   SecurityGroup:
-    Value: !Ref SecurityGroup
+    Value: !GetAtt SecurityGroup.GroupId

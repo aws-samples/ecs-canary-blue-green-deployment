@@ -12,43 +12,75 @@ Parameters:
   Cluster:
     Type: String
 
+  Subnets:
+    Type: List<AWS::EC2::Subnet::Id>
+
+  ALBSg:
+    Type: String
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+
 Resources:
   Repository:
     Type: AWS::ECR::Repository
     # DeletionPolicy: Retain
-    
-  ECSServiceRole:
-    Type: AWS::IAM::Role
-    Properties:
-      Path: /
-      AssumeRolePolicyDocument:
-        Statement:
-        - Effect: Allow
-          Principal:
-            Service: [ecs.amazonaws.com]
-          Action: ['sts:AssumeRole']
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceRole
 
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub ${AWS::StackName}
+      SecurityGroupIngress:
+        - SourceSecurityGroupId: !Ref ALBSg
+          IpProtocol: -1
+      VpcId: !Ref VpcId
   Service:
     Type: AWS::ECS::Service
-    DependsOn: 
-      - ECSServiceRole
+    DependsOn:
       - TaskDefinition
     Properties:
       Cluster: !Ref Cluster
-      Role: !Ref ECSServiceRole
+      LaunchType: FARGATE
+      #Role: !Ref ECSServiceRole
       DesiredCount: !Ref DesiredCount
       TaskDefinition: !Ref TaskDefinition
       LoadBalancers:
         - ContainerName: blue-app
           ContainerPort: 80
           TargetGroupArn: !Ref TargetGroup
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED #MENTION DISABLED if in private subnet with NAT gateway
+          SecurityGroups:
+             - !GetAtt SecurityGroup.GroupId
+          Subnets: !Ref Subnets
+
+  TaskIamRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /
+      AssumeRolePolicyDocument: |
+        {
+            "Statement": [{
+                "Effect": "Allow",
+                "Principal": { "Service": [ "ecs-tasks.amazonaws.com" ]},
+                "Action": [ "sts:AssumeRole" ]
+            }]
+        }
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
 
   TaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
       Family: !Sub ${AWS::StackName}-canary-app
+      RequiresCompatibilities:
+       - FARGATE
+      Cpu: 256
+      Memory: 512
+      NetworkMode: awsvpc
+      ExecutionRoleArn: !GetAtt TaskIamRole.Arn
       ContainerDefinitions:
         - Name: blue-app
           Cpu: 100
@@ -64,7 +96,6 @@ Resources:
               ContainerPath: /var/www/my-vol
           PortMappings:
             - ContainerPort: 80
-              HostPort: 0
         - Name: busybox
           Image: busybox
           EntryPoint:
