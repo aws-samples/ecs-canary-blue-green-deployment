@@ -1,3 +1,5 @@
+# **NOTE:** Same reference architecture, but using [AWS Fargate](https://aws.amazon.com/fargate/) is available in [fargate branch](https://github.com/awslabs/ecs-canary-blue-green-deployment/tree/fargate)
+
 # Canary Blue/Green deployments on ECS
 
 This reference architecture demonstrates how to execute a canary deployment for Amazon EC2 Container Service. Real world experience has show this solution to **not** work when the client's DNS resolver does not work as expected. If the client does not respect DNS TTL, then you must utilize another solution.
@@ -39,6 +41,11 @@ aws s3 mb s3://<MY_BUCKET_NAME>
 git clone https://github.com/awslabs/ecs-canary-blue-green-deployment.git
 ```
 
+#### 2a (Optional) . Switch to [fargate branch](https://github.com/awslabs/ecs-canary-blue-green-deployment/tree/fargate) , if you want to use [AWS Fargate](https://aws.amazon.com/fargate/)
+
+```console
+git checkout fargate
+```
 #### 3. Copy all templates and scripts into your bucket
 ```console
 aws s3 cp canary-setup.yaml s3://<MY_BUCKET_NAME>
